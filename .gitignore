@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+env/
+.streamlit/secrets.toml
+.DS_Store
+*.egg-info/
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# Local editor settings
+.claude/
