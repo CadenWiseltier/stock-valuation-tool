@@ -53,7 +53,9 @@ from src.financial_analysis import (
     historical_pe_series, income_statement_summary, is_financial_services_company,
     roe_series, roic_series,
 )
-from src.scenarios import ScenarioResult, run_scenarios, scenario_dispersion
+from src.scenarios import (
+    ScenarioResult, annualized_potential_upside, run_scenarios, scenario_dispersion,
+)
 from src.scoring import InvestmentScoreResult, compute_investment_score, price_sensitivity_table
 from src.sensitivity import revenue_growth_vs_margin_grid, wacc_vs_terminal_growth_grid
 from src.speculative import SpeculativeScoreResult, compute_speculative_score
@@ -521,9 +523,35 @@ with top1:
 with top2:
     st.metric("DCF Intrinsic Value", fmt_money(dcf.intrinsic_value_per_share))
 with top3:
-    upside_display = fmt_pct(dcf.upside) if not np.isnan(dcf.upside) else "N/A"
-    st.metric("Potential Upside/Downside", upside_display,
-              delta=upside_display if not np.isnan(dcf.upside) else None)
+    # Potential upside for ONE year, from the bull scenario, never negative --
+    # see src/scenarios.py::annualized_potential_upside for why the bull case
+    # and the zero floor are the right construction rather than a way of
+    # hiding bad news. The base-case intrinsic value sits directly to the left
+    # of this figure, so an overvalued stock is still plainly visible.
+    potential_upside = annualized_potential_upside(
+        analysis.scenarios, dcf.assumptions.forecast_years,
+        analyst_target_price=info.get("targetMeanPrice"),
+        current_price=dcf.current_price,
+    )
+    _pu_source = {
+        "analyst": "Based on the analyst consensus 12-month price target.",
+        "bull_case": "Based on this model's own bull-case DCF, annualized.",
+        "none": "Neither the analyst consensus nor the bull case values this company above "
+                "today's price, so this analysis sees no upside.",
+        "unavailable": "Not enough data to estimate.",
+    }.get(potential_upside.source, "")
+    upside_display = fmt_pct(potential_upside.value) if not np.isnan(potential_upside.value) else "N/A"
+    st.metric("Potential Upside (1-Year)", upside_display,
+              delta=upside_display if not np.isnan(potential_upside.value) else None,
+              help="How much the stock could gain over a year in the OPTIMISTIC case. This is "
+                   "not an expected return, not a prediction, and not a target. It takes "
+                   "whichever is higher of the analyst consensus 12-month price target and "
+                   "this model's own bull-case DCF, and never shows a negative number -- "
+                   "0.0% means no upside was found. For whether the stock looks over- or "
+                   "undervalued today, compare the DCF Intrinsic Value to its left, or open "
+                   "the DCF Valuation section below. " + _pu_source)
+    if _pu_source:
+        st.caption(_pu_source)
 
 score_col, gauge_col = st.columns([1, 1])
 with score_col:
@@ -543,8 +571,11 @@ q2.metric("Valuation Attractiveness", f"{score.valuation_attractiveness_score:.0
           help="Margin of safety vs. DCF, comps, own valuation history, and peers, plus growth-adjusted valuation (PEG-style). Price-dependent.")
 q3.metric("Expected Return", f"{score.expected_return_score:.0f} / 100",
           help="Expected annualized return from today's price (yield + growth + multiple reversion - dilution), plus probability-weighted scenario upside. Price-dependent.")
-q4.metric("Risk", f"{score.risk_score:.0f} / 100",
-          help="Valuation sensitivity, leverage, earnings/margin volatility, and data confidence. Higher = lower risk.")
+q4.metric("Risk", f"{score.risk_level:.0f} / 100",
+          help="How risky this company measures: 0 = no measured risk, 100 = maximum measured "
+               "risk. Built from valuation sensitivity, leverage, earnings/margin volatility, "
+               "and data confidence. Note this reads in the OPPOSITE direction to the three "
+               "readouts beside it -- here a LOWER number is better.")
 
 st.markdown("### Why?")
 if score.positive_factors or score.negative_factors:
@@ -747,9 +778,21 @@ st.divider()
 with st.expander("📈 Fundamental Investment Score Breakdown", expanded=True):
     rows = []
     for cat in score.categories:
-        rows.append({"Category": cat.name, "Points": f"{cat.points:.0f} / {cat.max_points:.0f}"})
+        # Every row here is POINTS EARNED toward the 1000-point total, so more
+        # is better in all of them -- including Risk, where the points measure
+        # safety. The headline Risk readout above deliberately shows the
+        # opposite direction (risk LEVEL), so the Risk row is labelled to stop
+        # the two numbers looking like a contradiction.
+        label = f"{cat.name} (points = safety)" if cat.name == "Risk" else cat.name
+        rows.append({"Category": label, "Points": f"{cat.points:.0f} / {cat.max_points:.0f}"})
     st.table(pd.DataFrame(rows).set_index("Category"))
     st.markdown(f"**TOTAL: {score.total:.0f} / 1000 -- {score.rating}**")
+    st.caption(
+        "All categories are shown as points earned toward the total, so a higher number is "
+        f"better in every row. In the Risk row that means points for being SAFE: {score.risk_score:.0f} "
+        f"of 100 points here is the same finding as the Risk level of {score.risk_level:.0f} / 100 "
+        "shown above."
+    )
 
     for cat in score.categories:
         with st.expander(f"{cat.name}: {cat.points:.0f} / {cat.max_points:.0f}"):
@@ -956,7 +999,14 @@ with st.expander("🧮 DCF Valuation", expanded=True):
     r1, r2, r3 = st.columns(3)
     r1.metric("Current Stock Price", fmt_money(analysis.dcf.current_price))
     r2.metric("DCF Intrinsic Value / Share", fmt_money(analysis.dcf.intrinsic_value_per_share))
-    r3.metric("Potential Upside / Downside", fmt_pct(analysis.dcf.upside))
+    # Deliberately NOT called "Potential Upside": this is the base-case DCF gap
+    # and is negative whenever the model thinks the stock is expensive. Naming
+    # it differently from the header metric keeps two genuinely different
+    # numbers from looking like a contradiction.
+    r3.metric("DCF vs. Current Price", fmt_pct(analysis.dcf.upside),
+              help="Base-case DCF intrinsic value against today's price. Negative means the "
+                   "model values the company below its market price. This is the central "
+                   "estimate, not the optimistic case shown at the top of the report.")
     st.caption(
         "The DCF is one of several inputs into the overall Fundamental Investment Score below -- "
         "it is not, by itself, a buy or sell recommendation."
@@ -1037,7 +1087,13 @@ with st.expander("🔬 Sensitivity Analysis"):
 # ---------------------------------------------------------------------------
 with st.expander("⚠️ Risks"):
     risk_cat = next(c for c in score.categories if c.name == "Risk")
-    st.markdown(f"Risk score: **{risk_cat.points:.0f} / {risk_cat.max_points:.0f}** (higher = lower risk).")
+    st.markdown(f"Risk level: **{score.risk_level:.0f} / 100** (0 = no measured risk, 100 = maximum).")
+    st.caption(
+        "The per-factor rows below are shown as points EARNED toward the Investment Score, so "
+        "they run the other way: a factor scoring near its maximum is a factor that is safe. "
+        f"Together they contribute {risk_cat.points:.0f} of {risk_cat.max_points:.0f} points to "
+        "the total score."
+    )
     for s in risk_cat.subscores:
         frac = s.points / s.max_points if s.max_points else 0
         flag = "🟢" if frac >= 0.66 else ("🟡" if frac >= 0.33 else "🔴")

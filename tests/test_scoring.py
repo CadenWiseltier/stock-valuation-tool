@@ -675,3 +675,44 @@ def test_sector_profile_is_optional_and_defaults_to_standard(full_score_inputs):
     explicit = compute_investment_score(**full_score_inputs, sector="Technology",
                                         industry="Software - Infrastructure")
     assert without.total == pytest.approx(explicit.total)
+
+
+# ---------------------------------------------------------------------------
+# Risk is reported as a risk LEVEL but must still be SCORED as safety.
+# ---------------------------------------------------------------------------
+def test_risk_level_is_the_inverse_of_the_risk_score(full_score_inputs):
+    """The UI shows risk as an amount of danger (0 = none, 100 = maximum),
+    which is the opposite direction from the points the category contributes.
+    Both views must describe the same measurement."""
+    result = compute_investment_score(**full_score_inputs)
+    assert result.risk_level == pytest.approx(100.0 - result.risk_score)
+    assert 0 <= result.risk_level <= 100
+
+
+def test_risk_still_contributes_points_for_being_SAFE(full_score_inputs):
+    """The load-bearing invariant behind the display flip.
+
+    The Risk category feeds the 1000-point total, where every category is
+    'more points = better investment'. If the flip had been applied to the
+    scoring rather than only to the display, leverage and earnings volatility
+    would start pushing companies UP toward a Buy rating. A safer company
+    must earn MORE points and show a LOWER risk level.
+    """
+    import copy
+
+    safe = copy.deepcopy(full_score_inputs)
+    safe["credit"] = {**safe["credit"], "net_debt_to_ebitda": -1.0, "debt_to_ebitda": 0.0,
+                      "interest_coverage": 50.0}
+    risky = copy.deepcopy(full_score_inputs)
+    risky["credit"] = {**risky["credit"], "net_debt_to_ebitda": 8.0, "debt_to_ebitda": 9.0,
+                       "interest_coverage": 1.1}
+
+    safe_result = compute_investment_score(**safe)
+    risky_result = compute_investment_score(**risky)
+
+    safe_cat = next(c for c in safe_result.categories if c.name == "Risk")
+    risky_cat = next(c for c in risky_result.categories if c.name == "Risk")
+
+    assert safe_cat.points > risky_cat.points, "safer company must EARN more risk-category points"
+    assert safe_result.risk_level < risky_result.risk_level, "safer company must DISPLAY a lower risk level"
+    assert safe_result.total > risky_result.total, "lower risk must raise the overall score, never lower it"

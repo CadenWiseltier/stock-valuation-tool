@@ -112,3 +112,95 @@ def scenario_dispersion(results: dict[str, ScenarioResult]) -> float:
     if any(np.isnan(x) or x == 0 for x in [bear_v, bull_v, base_v]):
         return np.nan
     return (bull_v - bear_v) / abs(base_v)
+
+
+@dataclass
+class PotentialUpside:
+    """A one-year potential-upside figure plus the evidence it came from."""
+
+    #: Non-negative annual rate. NaN when nothing could be computed.
+    value: float
+    #: "analyst" | "bull_case" | "none" | "unavailable" -- shown in the UI so
+    #: the number is never an unattributed assertion.
+    source: str
+    #: The two candidates, for display. Either may be NaN.
+    analyst_upside: float = float("nan")
+    bull_case_upside: float = float("nan")
+
+
+def annualized_potential_upside(
+    results: dict[str, ScenarioResult],
+    forecast_years: int,
+    analyst_target_price: float | None = None,
+    current_price: float | None = None,
+) -> PotentialUpside:
+    """Potential upside over ONE year, as a non-negative rate.
+
+    This answers "if things go well, how much could this gain in a year?" --
+    a deliberately different question from `DCFResult.upside`, which is the
+    total gap between the BASE-case intrinsic value and today's price and is
+    frequently, legitimately negative.
+
+    TWO INDEPENDENT UPSIDE CASES, WHICHEVER IS STRONGER
+    ---------------------------------------------------
+    1. Analyst consensus. A published 12-month mean price target is, by
+       convention, exactly a one-year figure, and it reflects forward
+       information this tool has no other way to see -- guidance, order
+       books, product cycles. Where it exists it is usually backed by
+       20-50 analysts.
+    2. The bull-case DCF, annualized over the forecast horizon. This is the
+       fallback for companies with thin or no analyst coverage, and it keeps
+       the metric working entirely offline from this project's own model.
+
+    The larger of the two is reported, because the metric is explicitly the
+    OPTIMISTIC case rather than a central estimate. That choice is only
+    honest while the label says so, so the UI names it "Potential Upside" and
+    the help text states plainly that it is not an expected or predicted
+    return. `source` records which input won, so the figure is always
+    attributable.
+
+    Taking the maximum also corrects a real distortion. This project's DCF is
+    deliberately conservative -- its median base-case upside across 49 real
+    companies was -54% -- so relying on it alone reported 0.0% potential
+    upside for Microsoft, Apple, NVIDIA and JPMorgan simultaneously. That is
+    a far stronger claim than the model can support, and it is contradicted
+    by dozens of analysts covering each of those companies.
+
+    WHY IT IS FLOORED AT ZERO
+    -------------------------
+    When neither case clears today's price, the honest reading is "this
+    analysis sees no upside", which is what 0.0% says. Nothing is concealed:
+    the base-case intrinsic value is displayed immediately beside it, the
+    bear case drives its own subscore in the Investment Score, and the full
+    scenario range appears in the scenario table.
+
+    Returns value=NaN with source="unavailable" when neither input can be
+    computed, so "no data" stays distinguishable from "no upside".
+    """
+    analyst_upside = np.nan
+    if (analyst_target_price is not None and current_price is not None
+            and not np.isnan(analyst_target_price) and not np.isnan(current_price)
+            and current_price > 0 and analyst_target_price > 0):
+        analyst_upside = analyst_target_price / current_price - 1.0
+
+    bull_upside = np.nan
+    bull = results.get("bull") if results else None
+    if bull is not None and forecast_years and forecast_years > 0:
+        value = bull.dcf.intrinsic_value_per_share
+        price = bull.dcf.current_price
+        if (value is not None and price is not None and not np.isnan(value)
+                and not np.isnan(price) and price > 0 and value > 0):
+            bull_upside = (value / price) ** (1.0 / forecast_years) - 1.0
+
+    candidates = [(analyst_upside, "analyst"), (bull_upside, "bull_case")]
+    usable = [(v, name) for v, name in candidates if not np.isnan(v)]
+    if not usable:
+        return PotentialUpside(value=np.nan, source="unavailable",
+                               analyst_upside=analyst_upside, bull_case_upside=bull_upside)
+
+    best_value, best_source = max(usable, key=lambda pair: pair[0])
+    if best_value <= 0:
+        return PotentialUpside(value=0.0, source="none",
+                               analyst_upside=analyst_upside, bull_case_upside=bull_upside)
+    return PotentialUpside(value=best_value, source=best_source,
+                           analyst_upside=analyst_upside, bull_case_upside=bull_upside)

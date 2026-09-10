@@ -47,6 +47,7 @@ exposed each one.
 | [6. Sensitivity Analysis](#6-sensitivity-analysis-srcsensitivitypy) | WACC × terminal growth, growth × margin grids |
 | [7. Fundamental Investment Score](#7-investment-score-0-1000-srcscoringpy) | All nine categories, formula by formula |
 | [7.11 Scoring Audit](#711-scoring-audit-and-recalibration) | Nine defects found against 49 real companies, and the fixes |
+| [7.12 Risk & Potential Upside](#712-two-readouts-that-run-in-opposite-directions) | Why these two readouts are displayed differently from how they are computed |
 | [8. Known Limitations](#8-known-limitations) | What this model cannot do |
 | [9. Speculation Score](#9-speculation-score-0-1000-srcspeculativepy-srcthemespy) | The separate forward-looking score |
 
@@ -1005,6 +1006,58 @@ extremes rare, and the movements are individually explicable:
 
 One company in 49 scores above 900, matching the spec's "very few should
 score 900+".
+### 7.12 Two readouts that run in opposite directions
+
+Two figures in the report are deliberately presented differently from the way
+they are computed, and both are worth stating plainly.
+
+**Risk is displayed as a risk LEVEL, but scored as safety.** The Risk category
+contributes 100 points to the 1000-point total, and like every other category
+those points are awarded for being good -- that is, for being safe. A company
+with no debt and stable earnings earns close to 100 of them. Displaying that
+number directly meant "Risk: 92/100" appeared next to a very conservative
+business, which inverts what almost everyone takes the word to mean.
+
+The headline readout therefore shows `100 - points`, so 0 means no measured
+risk and 100 means maximum measured risk. This is a display transform only.
+The points themselves keep their original direction, because reversing them
+in the scoring would mean leverage and earnings volatility started pushing
+companies *up* toward a Buy rating. The category breakdown still lists points
+earned, and labels that row accordingly so the two numbers cannot be mistaken
+for a contradiction.
+
+**Potential Upside is the optimistic case, over one year, and never negative.**
+`DCFResult.upside` is the total gap between the base-case intrinsic value and
+today's price. It is frequently and legitimately negative, and it is a
+multi-year thesis rather than a one-year move. It remains visible in the DCF
+Valuation section, labelled "DCF vs. Current Price".
+
+The headline "Potential Upside (1-Year)" answers a different question -- if
+things go well, how much could this gain in a year? It takes whichever is
+higher of:
+
+1. the analyst consensus 12-month price target, which is by convention
+   already a one-year figure and reflects forward information this tool
+   cannot otherwise see; and
+2. this project's own bull-case DCF, annualized over the forecast horizon,
+   which covers companies with thin or no analyst coverage.
+
+It is floored at zero, and reports which source it used. Relying on the DCF
+alone was tried first and rejected: because that model is deliberately
+conservative (median base-case upside of -54% across 49 real companies), it
+reported 0.0% potential upside for Microsoft, Apple, NVIDIA and JPMorgan
+simultaneously -- a far stronger claim than the model supports, and one
+contradicted by the dozens of analysts covering each of them.
+
+The zero floor conceals nothing. The base-case intrinsic value sits directly
+beside the figure, so an overvalued company is plainly visible; the bear case
+drives its own subscore; and the full scenario range appears in the scenario
+table. When the figure does read 0.0%, the app says why in a caption beneath
+it. It is an upside case and is labelled as one -- never an expected return,
+a prediction, or a target.
+
+---
+
 ## 8. Known Limitations
 
 - **Historical-average CapEx/D&A assumptions can be distorted by a

@@ -323,7 +323,19 @@ class InvestmentScoreResult:
     business_quality_score: float       # 0-100, price-independent
     valuation_attractiveness_score: float  # 0-100, price-dependent
     expected_return_score: float        # 0-100, price-dependent
-    risk_score: float                   # 0-100, price-independent
+    #: 0-100, price-independent. SAFETY, not danger: this is the Risk
+    #: category's share of its own points, so a HIGHER number means a SAFER
+    #: company. It is the value that contributes to the 1000-point total,
+    #: where every category is "more points = better investment", and it must
+    #: keep that direction or leverage and earnings volatility would start
+    #: pushing companies toward a Buy rating.
+    risk_score: float
+    #: 0-100, the same information stated the other way round: HOW RISKY the
+    #: company is, where 0 means no measured risk and 100 means maximum
+    #: measured risk. This is what the UI shows, because "Risk: 85/100"
+    #: reading as "very safe" inverts what almost everyone assumes the word
+    #: means. Presentation only -- it is never summed into the score.
+    risk_level: float
 
 
 # Aligned to the project's stated calibration bands: 900+ exceptional,
@@ -1223,6 +1235,17 @@ def _score_risk(scenario_dispersion: float, credit: dict, income_df: pd.DataFram
                  confidence_fraction: float, profile: CompanyProfile | None = None) -> CategoryScore:
     """Risk -- 100 points, price-independent. LOWER risk earns MORE points.
 
+    NOTE ON DIRECTION. The points computed here measure SAFETY, because every
+    category in this score feeds a 1000-point total where more points means a
+    better investment. The UI displays the same measurement inverted, as a
+    risk LEVEL (0 = none, 100 = maximum), since "Risk: 85/100" reading as
+    "very safe" inverts what the word normally implies. That inversion is
+    presentation only -- see `InvestmentScoreResult.risk_level`. Flipping it
+    here instead would make leverage and earnings volatility push companies
+    UP toward a Buy rating, which
+    tests/test_scoring.py::test_risk_still_contributes_points_for_being_SAFE
+    exists to prevent.
+
     RECALIBRATED. The audit found this category almost entirely saturated:
     the median company earned 89% of the available points on earnings
     volatility and 87% on margin volatility, so 35 of the 100 points were
@@ -1411,6 +1434,8 @@ def compute_investment_score(
     expected_return_score = (expected_return.points + scenario_weighted.points) / (
         expected_return.max_points + scenario_weighted.max_points) * 100
     risk_score = risk.points / risk.max_points * 100
+    # Same measurement, inverted for display: see the field comments above.
+    risk_level = 100.0 - risk_score
 
     return InvestmentScoreResult(
         total=total,
@@ -1422,6 +1447,7 @@ def compute_investment_score(
         valuation_attractiveness_score=valuation_attractiveness_score,
         expected_return_score=expected_return_score,
         risk_score=risk_score,
+        risk_level=risk_level,
     )
 
 
